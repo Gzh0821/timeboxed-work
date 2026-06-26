@@ -18,6 +18,8 @@ from typing import Any
 STATUS_ACTIVE = "active"
 STATUS_FINALIZING = "finalizing"
 STATUS_EXPIRED = "expired"
+INTENT_BOUNDED = "bounded"
+INTENT_STRETCH = "stretch"
 
 DEFAULT_RELATIVE_STATE = Path("work") / "timebox" / "timebox-state.json"
 TMP_BASE = Path("/private/tmp/codex-timebox")
@@ -235,6 +237,8 @@ def enrich_state(state: dict[str, Any], check_time: datetime, state_path: Path) 
 def cmd_start(args: argparse.Namespace) -> int:
     if args.mode not in {"soft", "guarded", "hard"}:
         raise TimeboxError(f"invalid mode: {args.mode}")
+    if args.intent not in {INTENT_BOUNDED, INTENT_STRETCH}:
+        raise TimeboxError(f"invalid intent: {args.intent}")
 
     start_time = now_local()
     deadline, duration_seconds, budget_kind = parse_budget(args.budget, start_time)
@@ -250,6 +254,7 @@ def cmd_start(args: argparse.Namespace) -> int:
         "duration_seconds": duration_seconds,
         "remaining_seconds": int(round((deadline - start_time).total_seconds())),
         "mode": args.mode,
+        "intent": args.intent,
         "finalization_buffer_seconds": int(buffer_seconds),
         "status": status_for(duration_seconds, int(buffer_seconds)),
         "budget": args.budget,
@@ -288,6 +293,12 @@ def build_parser() -> argparse.ArgumentParser:
     start = subparsers.add_parser("start", help="start a new timebox")
     start.add_argument("budget", help='duration like "90m" or deadline like "until 18:30"')
     start.add_argument("--mode", choices=["soft", "guarded", "hard"], default="soft")
+    start.add_argument(
+        "--intent",
+        choices=[INTENT_BOUNDED, INTENT_STRETCH],
+        default=INTENT_BOUNDED,
+        help="bounded finishes when the task is done; stretch keeps improving until the timebox is near done",
+    )
     start.add_argument("--workspace", help="workspace root for work/timebox state")
     start.add_argument("--state", help="explicit state file path")
     start.add_argument("--finalization-buffer-seconds", type=int)
