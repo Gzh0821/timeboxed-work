@@ -1,22 +1,33 @@
 ---
 name: timeboxed-work
-description: Work under an explicit time budget with deterministic deadline tracking, useful stretch work, scope control, and handoff. Use when the user asks for a timebox, fixed duration, deadline, work for N minutes/hours, use the full time, keep improving until the deadline, stop at a specific time, hard deadline, guarded deadline, 按固定时间工作, 工作 N 分钟/小时, 做满时间, 持续优化到点, 到点停止, 时间预算, or similar bounded-work requests.
+description: Work under an explicit time budget with deterministic deadline tracking, useful stretch work, scope control, isolated timers for parallel sessions/agents/apps, and handoff. Use when the user asks for a timebox, fixed duration, deadline, work for N minutes/hours, use the full time, keep improving until the deadline, multiple agents with different time budgets, stop at a specific time, hard deadline, guarded deadline, 按固定时间工作, 工作 N 分钟/小时, 做满时间, 持续优化到点, 多个 agent 独立计时, 到点停止, 时间预算, or similar bounded-work requests.
 ---
 
 # Timeboxed Work
 
-Use this skill to keep agent work aligned with a user-specified wall-clock budget. `mode` controls deadline enforcement; `intent` controls whether to finish early or continue useful improvement work. This skill is not a hard real-time controller; hard stops require host or outer-supervisor support. `scripts/run_with_deadline.py` can only control child commands launched through it.
+Use this skill to keep agent work aligned with a user-specified wall-clock budget. `mode` controls deadline enforcement; `intent` controls whether to finish early or continue useful improvement work. Each session, agent, or app must have an isolated `timebox_id` or `state_file` so concurrent work in the same workspace cannot share a timer by accident. This skill is not a hard real-time controller; hard stops require host or outer-supervisor support. `scripts/run_with_deadline.py` can only control child commands launched through it.
 
 ## Start Protocol
 
 1. Create state before doing task work:
    ```bash
-   python3 scripts/timebox.py start "<budget>" --mode soft --intent bounded
+   python3 scripts/timebox.py start "<budget>" --mode soft --intent bounded --id "<session-or-agent-id>"
    ```
    Use `--mode guarded` only when the user asks for guarded deadline behavior. Use `--mode hard` only when the user explicitly says time is priority, must stop exactly on time, hard deadline, 硬截止, 必须准点停, or equivalent.
 2. Use `--intent stretch` when the user asks to work/spend/use the full time, keep improving until the deadline, 做满时间, 持续优化到点, or when a fixed-duration request clearly means sustained effort rather than just an upper bound.
 3. Convert relative budgets to an absolute `deadline_at` from the JSON output. Do not estimate the current time from memory.
-4. If the request is ambiguous, choose a conservative interpretation and state it at the start, for example: default soft mode, bounded intent, wall-clock time counts while waiting, and work may finish early.
+4. Save the returned `state_file` and `timebox_id`. Use that exact `state_file`, or the same `--id`, for every later `check`, `summary`, and wrapped command.
+5. If the request is ambiguous, choose a conservative interpretation and state it at the start, for example: default soft mode, bounded intent, isolated generated timebox id, wall-clock time counts while waiting, and work may finish early.
+
+If no stable session/thread/agent id is available, omit `--id` on `start`; the script will generate a unique `timebox_id`. After that, reuse the returned `state_file`. Do not use bare `check` or `summary` in a multi-session workspace.
+
+## Isolation
+
+- Treat each user-assigned timebox as separate state, even when multiple agents work in the same repository.
+- Prefer a stable id from the host when available, such as a thread id, subagent name, app name plus task id, or handoff id.
+- If a user starts two timeboxes in the same app/session, use different ids for each task.
+- Do not infer one session's remaining time from another session's state file.
+- Pass the same state file to `scripts/run_with_deadline.py --state` for guarded or hard commands in that specific session.
 
 ## Planning Protocol
 
@@ -77,23 +88,23 @@ If `run_with_deadline.py` stops a command, the final report must name the stoppe
 Start examples:
 
 ```bash
-python3 scripts/timebox.py start "1h" --intent stretch
-python3 scripts/timebox.py start "3h15m" --mode guarded --intent stretch
+python3 scripts/timebox.py start "1h" --intent stretch --id "codex-thread-123"
+python3 scripts/timebox.py start "3h15m" --mode guarded --intent stretch --id "agent-a"
 python3 scripts/timebox.py start "1小时20分钟"
-python3 scripts/timebox.py start "until 18:30" --mode hard
+python3 scripts/timebox.py start "until 18:30" --mode hard --id "review-session"
 ```
 
 Check and summarize:
 
 ```bash
-python3 scripts/timebox.py check
-python3 scripts/timebox.py summary
+python3 scripts/timebox.py check --state "<state_file from start>"
+python3 scripts/timebox.py summary --id "codex-thread-123"
 ```
 
 Wrap a long command only in `guarded` or `hard` mode:
 
 ```bash
-python3 scripts/run_with_deadline.py --state work/timebox/timebox-state.json -- pytest
+python3 scripts/run_with_deadline.py --state "<state_file from start>" -- pytest
 ```
 
 Waiting for approvals or external input counts against wall-clock time unless the user says otherwise.

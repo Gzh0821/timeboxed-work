@@ -10,6 +10,7 @@ import os
 import re
 import sys
 import tempfile
+import uuid
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
@@ -21,7 +22,8 @@ STATUS_EXPIRED = "expired"
 INTENT_BOUNDED = "bounded"
 INTENT_STRETCH = "stretch"
 
-DEFAULT_RELATIVE_STATE = Path("work") / "timebox" / "timebox-state.json"
+DEFAULT_STATE_NAME = "timebox-state.json"
+DEFAULT_RELATIVE_STATE_ROOT = Path("work") / "timebox"
 TMP_BASE = Path("/private/tmp/codex-timebox")
 
 
@@ -158,22 +160,50 @@ def workspace_path(value: str | None) -> Path:
     return Path(value).expanduser().resolve() if value else Path.cwd().resolve()
 
 
-def workspace_state_path(workspace: Path) -> Path:
-    return workspace / DEFAULT_RELATIVE_STATE
+def sanitize_timebox_id(value: str) -> str:
+    cleaned = re.sub(r"[^A-Za-z0-9._-]+", "-", value.strip())
+    cleaned = cleaned.strip(".-_")
+    if not cleaned:
+        raise TimeboxError("timebox id must contain at least one letter or digit")
+    return cleaned[:96]
 
 
-def tmp_state_path(workspace: Path) -> Path:
+def generate_timebox_id(start_time: datetime) -> str:
+    stamp = start_time.strftime("%Y%m%dT%H%M%S")
+    return f"{stamp}-{os.getpid()}-{uuid.uuid4().hex[:8]}"
+
+
+def resolve_timebox_id(explicit_id: str | None, start_time: datetime | None = None) -> str:
+    if explicit_id:
+        return sanitize_timebox_id(explicit_id)
+    env_id = os.environ.get("TIMEBOX_ID")
+    if env_id:
+        return sanitize_timebox_id(env_id)
+    if start_time is None:
+        raise TimeboxError("provide --state or --id, or set TIMEBOX_ID")
+    return generate_timebox_id(start_time)
+
+
+def workspace_state_path(workspace: Path, timebox_id: str) -> Path:
+    return workspace / DEFAULT_RELATIVE_STATE_ROOT / timebox_id / DEFAULT_STATE_NAME
+
+
+def tmp_state_path(workspace: Path, timebox_id: str) -> Path:
     digest = hashlib.sha256(str(workspace).encode("utf-8")).hexdigest()[:16]
-    return TMP_BASE / digest / "timebox-state.json"
+    return TMP_BASE / digest / timebox_id / DEFAULT_STATE_NAME
 
 
-def choose_existing_state_path(workspace: Path, explicit: str | None) -> Path:
+def choose_existing_state_path(workspace: Path, explicit: str | None, explicit_id: str | None) -> Path:
     if explicit:
         return Path(explicit).expanduser().resolve()
-    candidate = workspace_state_path(workspace)
+    env_state = os.environ.get("TIMEBOX_STATE_FILE")
+    if env_state:
+        return Path(env_state).expanduser().resolve()
+    timebox_id = resolve_timebox_id(explicit_id)
+    candidate = workspace_state_path(workspace, timebox_id)
     if candidate.exists():
         return candidate
-    return tmp_state_path(workspace)
+    return tmp_state_path(workspace, timebox_id)
 
 
 def write_json_atomic(path: Path, data: dict[str, Any]) -> None:
@@ -189,18 +219,18 @@ def write_json_atomic(path: Path, data: dict[str, Any]) -> None:
             os.unlink(tmp_name)
 
 
-def write_state(workspace: Path, explicit: str | None, data: dict[str, Any]) -> Path:
+def write_state(workspace: Path, explicit: str | None, timebox_id: str, data: dict[str, Any]) -> Path:
     if explicit:
         path = Path(explicit).expanduser().resolve()
         write_json_atomic(path, data)
         return path
 
-    candidate = workspace_state_path(workspace)
+    candidate = workspace_state_path(workspace, timebox_id)
     try:
         write_json_atomic(candidate, data)
         return candidate
     except OSError:
-        fallback = tmp_state_path(workspace)
+        fallback = tmp_state_path(workspace, timebox_id)
         write_json_atomic(fallback, data)
         return fallback
 
@@ -241,6 +271,7 @@ def cmd_start(args: argparse.Namespace) -> int:
         raise TimeboxError(f"invalid intent: {args.intent}")
 
     start_time = now_local()
+    timebox_id = resolve_timebox_id(args.id, start_time)
     deadline, duration_seconds, budget_kind = parse_budget(args.budget, start_time)
     buffer_seconds = args.finalization_buffer_seconds
     if buffer_seconds is None:
@@ -259,10 +290,11 @@ def cmd_start(args: argparse.Namespace) -> int:
         "status": status_for(duration_seconds, int(buffer_seconds)),
         "budget": args.budget,
         "budget_kind": budget_kind,
+        "timebox_id": timebox_id,
         "timezone": start_time.tzname(),
     }
     workspace = workspace_path(args.workspace)
-    path = write_state(workspace, args.state, state)
+    path = write_state(workspace, args.state, timebox_id, state)
     state["state_file"] = str(path)
     print(json.dumps(state, indent=2, sort_keys=True, ensure_ascii=False))
     return 0
@@ -270,7 +302,7 @@ def cmd_start(args: argparse.Namespace) -> int:
 
 def cmd_check(args: argparse.Namespace) -> int:
     workspace = workspace_path(args.workspace)
-    path = choose_existing_state_path(workspace, args.state)
+    path = choose_existing_state_path(workspace, args.state, args.id)
     state = enrich_state(load_state(path), now_local(), path)
     print(json.dumps(state, indent=2, sort_keys=True, ensure_ascii=False))
     return 0
@@ -278,7 +310,7 @@ def cmd_check(args: argparse.Namespace) -> int:
 
 def cmd_summary(args: argparse.Namespace) -> int:
     workspace = workspace_path(args.workspace)
-    path = choose_existing_state_path(workspace, args.state)
+    path = choose_existing_state_path(workspace, args.state, args.id)
     state = enrich_state(load_state(path), now_local(), path)
     deadline = parse_datetime(str(state["deadline_at"]))
     state["overrun_seconds"] = max(0, int(round((now_local() - deadline).total_seconds())))
@@ -301,6 +333,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     start.add_argument("--workspace", help="workspace root for work/timebox state")
     start.add_argument("--state", help="explicit state file path")
+    start.add_argument("--id", help="stable per-session/per-agent timebox id; generated when omitted")
     start.add_argument("--finalization-buffer-seconds", type=int)
     start.set_defaults(func=cmd_start)
 
@@ -311,6 +344,7 @@ def build_parser() -> argparse.ArgumentParser:
         sub = subparsers.add_parser(name, help=help_text)
         sub.add_argument("--workspace", help="workspace root for work/timebox state")
         sub.add_argument("--state", help="explicit state file path")
+        sub.add_argument("--id", help="stable per-session/per-agent timebox id, or set TIMEBOX_ID")
         sub.set_defaults(func=func)
 
     return parser

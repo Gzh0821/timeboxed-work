@@ -27,6 +27,7 @@ npx skills add Gzh0821/timeboxed-work --skill timeboxed-work
 - 希望小任务完成后继续做有价值的测试、优化、清理或细化，尽量用满给定时间。
 - 希望长测试、构建或脚本在硬截止场景下不要无限运行。
 - 希望把“还有多久”从主观估算改成脚本记录的确定性状态。
+- 希望多个 session、agent 或 app 同时工作时，各自按自己的时间预算计时，互不混淆。
 
 你可以这样提出请求：
 
@@ -46,6 +47,10 @@ npx skills add Gzh0821/timeboxed-work --skill timeboxed-work
 这是 hard deadline，必须准点停。先做 must，再做 should，来不及就停下交接。
 ```
 
+```text
+我会开两个 agent：A 做 45 分钟，B 做 2 小时。请分别计时，互不影响。
+```
+
 ## 两种时间意图
 
 - `bounded`：把时间当上限。任务完成后可以提前交付，不为了填满时间做无意义工作。
@@ -58,6 +63,12 @@ npx skills add Gzh0821/timeboxed-work --skill timeboxed-work
 - `soft`：默认模式。时间是高优先级约束，但不会强行杀掉已经在运行的命令；到点后停止开启新工作并尽快总结。
 - `guarded`：只对明显可能超时的长命令使用 deadline wrapper，例如全量测试、构建或长脚本。
 - `hard`：仅在你明确要求“时间优先”“必须准点停”“硬截止”或 “hard deadline” 时使用。长命令会通过 wrapper 执行，到点可终止子进程。
+
+## 多会话隔离
+
+每个 timebox 都会有独立的 `timebox_id` 和状态文件。多个 session、agent 或 app 在同一个仓库里同时工作时，应该分别使用自己的 id 和状态文件，避免 A 的剩余时间被 B 读取或覆盖。
+
+如果运行环境能提供 thread id、session id、agent name 或 app task id，skill 会优先使用它作为隔离标识；如果没有，脚本会在开始时生成一个唯一 id，并在后续检查中复用同一个状态文件。
 
 ## 注意事项
 

@@ -4,6 +4,7 @@ Use this reference when the timebox reaches the finalization buffer, expires, or
 
 ## Scope Control
 
+- Confirm the `state_file` or `timebox_id` belongs to the current session, agent, or app before using remaining time.
 - Protect a small verified `must` result over a larger unfinished result.
 - If progress is behind plan, cut `could` items first, then `should` items.
 - In `stretch` intent, continue only with useful, low-risk improvements that fit the remaining safe window.
