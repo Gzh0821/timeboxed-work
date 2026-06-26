@@ -70,6 +70,10 @@ npx skills add Gzh0821/timeboxed-work --skill timeboxed-work
 
 如果运行环境能提供 thread id、session id、agent name 或 app task id，skill 会优先使用它作为隔离标识；如果没有，脚本会在开始时生成一个唯一 id，并在后续检查中复用同一个状态文件。
 
+## 完成后清理
+
+任务完成、验证通过且不需要继续交接时，agent 可以清理本次 timebox 的状态文件，避免留下无用记录。如果还在等你验收、发生过超时、wrapper 停止过命令、验证未完成，或后续 session 还需要接着做，则应该保留状态文件并在交接里说明路径。
+
 ## 注意事项
 
 这个 skill 不是硬实时控制器。它能约束 agent 自己启动的工作流程，并能控制通过 wrapper 启动的子命令；如果你需要宿主环境级别的强制中断，还需要外层监督器或运行环境支持。

@@ -245,6 +245,13 @@ def load_state(path: Path) -> dict[str, Any]:
         raise TimeboxError(f"invalid timebox state JSON: {path}") from exc
 
 
+def validate_timebox_state(state: dict[str, Any], path: Path) -> None:
+    required = {"started_at", "deadline_at", "duration_seconds", "mode", "status"}
+    missing = sorted(required.difference(state))
+    if missing:
+        raise TimeboxError(f"not a timebox state file, missing {', '.join(missing)}: {path}")
+
+
 def enrich_state(state: dict[str, Any], check_time: datetime, state_path: Path) -> dict[str, Any]:
     deadline = parse_datetime(str(state["deadline_at"]))
     started = parse_datetime(str(state["started_at"]))
@@ -262,6 +269,19 @@ def enrich_state(state: dict[str, Any], check_time: datetime, state_path: Path) 
         }
     )
     return enriched
+
+
+def cleanup_empty_timebox_dir(path: Path, state: dict[str, Any]) -> bool:
+    timebox_id = state.get("timebox_id")
+    if not isinstance(timebox_id, str) or not timebox_id:
+        return False
+    if path.name != DEFAULT_STATE_NAME or path.parent.name != timebox_id:
+        return False
+    try:
+        path.parent.rmdir()
+    except OSError:
+        return False
+    return True
 
 
 def cmd_start(args: argparse.Namespace) -> int:
@@ -318,6 +338,25 @@ def cmd_summary(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_cleanup(args: argparse.Namespace) -> int:
+    workspace = workspace_path(args.workspace)
+    path = choose_existing_state_path(workspace, args.state, args.id)
+    state = load_state(path)
+    validate_timebox_state(state, path)
+    timebox_id = state.get("timebox_id")
+    path.unlink()
+    removed_empty_dir = cleanup_empty_timebox_dir(path, state)
+    summary = {
+        "status": "cleaned",
+        "state_file": str(path),
+        "timebox_id": timebox_id,
+        "removed_state_file": True,
+        "removed_empty_timebox_dir": removed_empty_dir,
+    }
+    print(json.dumps(summary, indent=2, sort_keys=True, ensure_ascii=False))
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Create and inspect deterministic timebox state.")
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -340,6 +379,7 @@ def build_parser() -> argparse.ArgumentParser:
     for name, help_text, func in (
         ("check", "check current timebox state", cmd_check),
         ("summary", "print current timebox summary", cmd_summary),
+        ("cleanup", "remove the current completed timebox state", cmd_cleanup),
     ):
         sub = subparsers.add_parser(name, help=help_text)
         sub.add_argument("--workspace", help="workspace root for work/timebox state")

@@ -83,6 +83,17 @@ Default finalization buffer:
 
 If `run_with_deadline.py` stops a command, the final report must name the stopped command, say how much time remained or how far past deadline it stopped, and list validations or work that did not finish. Read `references/stop-policy.md` when handling a stopped command or expired timebox.
 
+## Completion Cleanup
+
+Clean up state only after the final answer or handoff no longer needs it:
+
+- If the task is complete, verification is done, no user acceptance is pending, no wrapper command was stopped, and the user did not ask to keep records, run `scripts/timebox.py cleanup` for the current state.
+- If user acceptance is required, keep the state until acceptance passes.
+- If the timebox expired, a wrapped command timed out, validation is incomplete, or another session needs the state for handoff, keep the state and report its path.
+- Never manually delete or sweep `work/timebox/`. Use the cleanup command so only the current `state_file` and its empty current timebox directory can be removed.
+
+If cleanup is run, mention in the final report that this timebox state was cleaned. If cleanup is skipped, mention why when the state matters for continuation.
+
 ## Script Usage
 
 Start examples:
@@ -99,6 +110,7 @@ Check and summarize:
 ```bash
 python3 scripts/timebox.py check --state "<state_file from start>"
 python3 scripts/timebox.py summary --id "codex-thread-123"
+python3 scripts/timebox.py cleanup --state "<state_file from start>"
 ```
 
 Wrap a long command only in `guarded` or `hard` mode:
